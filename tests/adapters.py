@@ -560,7 +560,51 @@ def get_tokenizer(
     Returns:
         A BPE tokenizer that uses the provided vocab, merges, and special tokens.
     """
-    raise NotImplementedError
+    class Tokenizer:
+        def __init__(self, vocab, merges, special_tokens=None):
+            self.vocab = vocab
+            self.merges = merges
+            self.special_tokens = special_tokens
+
+        def encode(self, text:str)  -> list[int]:
+            answer = []
+            import regex as re
+            PAT = re.compile(
+                    r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+                )
+            if special_tokens:
+                special_pattern = "|".join(re.escape(t) for t in special_tokens)
+                chunks = re.split(special_pattern, text)
+            else:
+                chunks = [text]
+            words = [
+                word
+                for chunk in chunks
+                for word in PAT.findall(chunk)
+            ]
+            start = 256 + len(special_tokens)
+            for j,merge in enumerate(merges):
+                for word in words:
+                    intermediate_word = word
+                    k = 0
+                    for i in range(len(intermediate_word) - 1):
+                        if intermediate_word[i] == merge[0] and intermediate_word[i+1] == merge[1]:
+                            word = word[:i-k] + vocab[start+j] + word[i+1-k:]
+                            k += 1
+            reverse_vocab = {
+                token: token_id
+                for token_id, token in vocab.items()
+            }
+            for word in words:
+                for id in word:
+                    answer.append(id)
+            return answer
+                         
+                        
+
+            def decode(self, ids):
+                pass
+    return Tokenizer(vocab, merges, special_tokens)
 
 
 def run_train_bpe(
@@ -633,7 +677,6 @@ def run_train_bpe(
         if len(intermediate_dict) == 0:
             break
         
-        # 频率最高优先；频率相同时按照 byte pair 字典序选择
         best_pair = max(
             intermediate_dict.items(),
             key=lambda item: (item[1], item[0]),
@@ -676,30 +719,4 @@ def run_train_bpe(
             if intermediate_dict[pair] <= 0:
                 del intermediate_dict[pair]
                 index_dict.pop(pair, None)
-
-    '''with open("vocab.txt", "w", encoding="utf-8") as f:
-        for token_id, token in resultdict.items():
-            f.write(f"{token_id}: {token!r}\n")
-
-    with open("merges.txt", "w", encoding="utf-8") as f:
-        for pair in merges:
-            f.write(f"{pair!r}\n")
-
-    with open("result.json", "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "vocab": {
-                    str(token_id): list(token)
-                    for token_id, token in resultdict.items()
-                },
-                "merges": [
-                    [list(left), list(right)]
-                    for left, right in merges
-                ],
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )'''
-    
     return dict(resultdict), merges
