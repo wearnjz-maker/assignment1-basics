@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict, deque
 import os
 from collections.abc import Iterable
 from typing import IO, Any, BinaryIO
@@ -568,25 +569,137 @@ def run_train_bpe(
     special_tokens: list[str],
     **kwargs,
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-    """Given the path to an input corpus, run train a BPE tokenizer and
-    output its vocabulary and merges.
 
-    Args:
-        input_path (str | os.PathLike): Path to BPE tokenizer training data.
-        vocab_size (int): Total number of items in the tokenizer's vocabulary (including special tokens).
-        special_tokens (list[str]): A list of string special tokens to be added to the tokenizer vocabulary.
-            These strings will never be split into multiple tokens, and will always be
-            kept as a single token. If these special tokens occur in the `input_path`,
-            they are treated as any other string.
+    import regex as re
 
-    Returns:
-        tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
-            vocab:
-                The trained tokenizer vocabulary, a mapping from int (token ID in the vocabulary)
-                to bytes (token bytes)
-            merges:
-                BPE merges. Each list item is a tuple of bytes (<token1>, <token2>),
-                representing that <token1> was merged with <token2>.
-                Merges are ordered by order of creation.
-    """
-    raise NotImplementedError
+    PAT = re.compile(
+        r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+    )
+    # 初始化，读取文件内容
+    add_num = vocab_size - 256 - len(special_tokens)
+    if add_num < 0:
+        raise ValueError(
+            f"vocab_size ({vocab_size}) must be greater than or equal to "
+            f"256 + the number of special tokens ({len(special_tokens)})"
+        )
+
+    if input_path is None or not os.path.isfile(input_path):
+        raise ValueError(
+            f"input_path ({input_path}) must be a valid path to a file"
+        )
+
+    with open(input_path,  encoding="utf-8") as f:
+        text = f.read()
+
+    # 初始化 resultdict
+    resultdict = defaultdict(bytes)
+
+    for i in range(256):
+        resultdict[i] = bytes([i])
+
+    for i, token in enumerate(special_tokens):
+        resultdict[i + 256] = token.encode()
+
+    resultlen = len(resultdict)
+
+    # 利用 special_token 分割内容
+    #text = content.decode("utf-8")
+
+    if special_tokens:
+        special_pattern = "|".join(re.escape(t) for t in special_tokens)
+        chunks = re.split(special_pattern, text)
+    else:
+        chunks = [text]
+
+    lines = Counter(
+        tuple(bytes([b]) for b in word.encode("utf-8"))
+        for chunk in chunks
+        for word in PAT.findall(chunk)
+    )
+
+    merges = []
+    dictlen = 0
+    line_items = [[list(line), count] for line, count in lines.items()]
+    intermediate_dict = defaultdict(int)
+    index_dict = defaultdict(set)    
+    for q,(line, count) in enumerate(line_items):
+        for i in range(len(line) - 1):
+            pair = (line[i], line[i + 1])
+            intermediate_dict[pair] += count
+            index_dict[pair].add(q)
+                
+    while dictlen < add_num:
+        
+        if len(intermediate_dict) == 0:
+            break
+        
+        # 频率最高优先；频率相同时按照 byte pair 字典序选择
+        best_pair = max(
+            intermediate_dict.items(),
+            key=lambda item: (item[1], item[0]),
+        )[0]
+
+        merged_token = best_pair[0] + best_pair[1]
+
+        resultdict[resultlen + dictlen] = merged_token
+        merges.append(best_pair)
+        dictlen += 1
+
+        #new_lines = line_items.copy()
+
+        for q in list(index_dict[best_pair]):
+            line, count = line_items[q]
+            merged_line = []
+            i = 0
+            while i < len(line):
+                if (
+                    i + 1 < len(line)
+                    and line[i] == best_pair[0]
+                    and line[i + 1] == best_pair[1]
+                ):
+                    merged_line.append(merged_token)
+                    i += 2
+                else:
+                    merged_line.append(line[i])
+                    i += 1
+            line_items[q][0] = merged_line
+            for i in range(len(line) - 1):
+                pair = (line[i], line[i + 1])
+                index_dict[pair].discard(q)
+                intermediate_dict[pair] -= count
+            for i in range(len(merged_line) - 1):
+                pair = (merged_line[i], merged_line[i + 1])
+                intermediate_dict[pair] += count
+                index_dict[pair].add(q)
+            #new_lines[tuple(merged_line)] += count
+        for pair in list(intermediate_dict):
+            if intermediate_dict[pair] <= 0:
+                del intermediate_dict[pair]
+                index_dict.pop(pair, None)
+
+    '''with open("vocab.txt", "w", encoding="utf-8") as f:
+        for token_id, token in resultdict.items():
+            f.write(f"{token_id}: {token!r}\n")
+
+    with open("merges.txt", "w", encoding="utf-8") as f:
+        for pair in merges:
+            f.write(f"{pair!r}\n")
+
+    with open("result.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "vocab": {
+                    str(token_id): list(token)
+                    for token_id, token in resultdict.items()
+                },
+                "merges": [
+                    [list(left), list(right)]
+                    for left, right in merges
+                ],
+            },
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )'''
+    
+    return dict(resultdict), merges
