@@ -564,7 +564,7 @@ def get_tokenizer(
         def __init__(self, vocab, merges, special_tokens=None):
             self.vocab = vocab
             self.merges = merges
-            self.special_tokens = special_tokens
+            self.special_tokens = special_tokens or []
 
         def encode(self, text:str)  -> list[int]:
             answer = []
@@ -572,38 +572,61 @@ def get_tokenizer(
             PAT = re.compile(
                     r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
                 )
-            if special_tokens:
-                special_pattern = "|".join(re.escape(t) for t in special_tokens)
-                chunks = re.split(special_pattern, text)
+            current_special_tokens = self.special_tokens or []
+            if current_special_tokens:
+                special_pattern = "|".join(
+                    re.escape(token)
+                    for token in sorted(current_special_tokens, key=len, reverse=True)
+                )
+                chunks = re.split(f"({special_pattern})", text)
             else:
                 chunks = [text]
-            words = [
-                word
-                for chunk in chunks
-                for word in PAT.findall(chunk)
-            ]
-            start = 256 + len(special_tokens)
-            for j,merge in enumerate(merges):
-                for word in words:
+            
+            words = []
+
+            for chunk in chunks:
+                if not chunk:
+                    continue
+
+                if chunk in current_special_tokens:
+                    words.append([chunk.encode("utf-8")])
+                else:
+                    words.extend(
+                        [
+                            [bytes([b]) for b in word.encode("utf-8")]
+                            for word in PAT.findall(chunk)
+                        ]
+                )
+            #start = 256 + len(special_tokens)
+            new_words = words
+            for j,merge in enumerate(self.merges):
+                words = new_words
+                new_words = []
+                for q,word in enumerate(words):
                     intermediate_word = word
-                    k = 0
-                    for i in range(len(intermediate_word) - 1):
-                        if intermediate_word[i] == merge[0] and intermediate_word[i+1] == merge[1]:
-                            word = word[:i-k] + vocab[start+j] + word[i+1-k:]
-                            k += 1
+                    merge_word = []
+                    i = 0
+                    while i < len(intermediate_word):
+                        if intermediate_word[i] == merge[0] and i<len(intermediate_word)and i+1<len(intermediate_word) and intermediate_word[i+1] == merge[1]:
+                            merge_word.append(merge[0]+merge[1])
+                            i += 2
+                        else:
+                            merge_word.append(intermediate_word[i])
+                            i += 1
+                    new_words.append(merge_word)
             reverse_vocab = {
                 token: token_id
-                for token_id, token in vocab.items()
+                for token_id, token in self.vocab.items()
             }
-            for word in words:
+            for word in new_words:
                 for id in word:
-                    answer.append(id)
+                    answer.append(reverse_vocab[id])
             return answer
                          
                         
 
-            def decode(self, ids):
-                pass
+        def decode(self, ids):
+            pass
     return Tokenizer(vocab, merges, special_tokens)
 
 
