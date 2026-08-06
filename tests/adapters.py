@@ -568,6 +568,10 @@ def get_tokenizer(
             self.vocab = vocab
             self.merges = merges
             self.special_tokens = special_tokens or []
+            self.merge_ranks = {
+                merge: index
+                for index, merge in enumerate(self.merges)
+            }
 
         def encode(self, text:str)  -> list[int]:
             answer = []
@@ -607,13 +611,23 @@ def get_tokenizer(
                 #words = new_words
                 token_set = set(word)
                 merge_word = word
-                for j,merge in enumerate(self.merges):
-                    
-                    if merge[0] not in token_set or merge[1] not in token_set:
-                        continue
+                used_merges = defaultdict(tuple)
+                
+                
+                
+                for i in range(len(merge_word) - 1):
+                    pair = tuple(merge_word[i:i + 2])
+                    if pair in self.merge_ranks:
+                        index = self.merge_ranks[pair]
+                        used_merges[index] = pair
+                while len(used_merges) > 0:
+                    min_index = min(used_merges)
+                    merge = used_merges.pop(min_index)
+                    #merge = used_merges.popitem()[1]
                     intermediate_word = merge_word
                     merge_word = []
                     i = 0
+                    #merge = used_merges[0]
                     while i < len(intermediate_word):
                         if intermediate_word[i] == merge[0] and i<len(intermediate_word)and i+1<len(intermediate_word) and intermediate_word[i+1] == merge[1]:
                             merge_word.append(merge[0]+merge[1])
@@ -621,7 +635,14 @@ def get_tokenizer(
                         else:
                             merge_word.append(intermediate_word[i])
                             i += 1
-                    token_set = set(merge_word)    
+                    if len(merge_word) == 0:
+                        break
+                    used_merges = defaultdict(tuple)
+                    for i in range(len(merge_word) - 1):
+                        pair = tuple(merge_word[i:i + 2])
+                        if pair in self.merge_ranks:
+                            index = self.merge_ranks[pair]
+                            used_merges[index] = pair
                 new_words.append(merge_word)
             #words = new_words
             reverse_vocab = {
