@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque
+import json
 import os
 from collections.abc import Iterable
+import time
 from typing import IO, Any, BinaryIO
 
 import numpy.typing as npt
+from tests.common import gpt2_bytes_to_unicode
 import torch
 from jaxtyping import Bool, Float, Int
 from torch import Tensor
@@ -583,7 +586,7 @@ def get_tokenizer(
                 chunks = [text]
             
             words = []
-
+            
             for chunk in chunks:
                 if not chunk:
                     continue
@@ -599,11 +602,16 @@ def get_tokenizer(
                 )
             #start = 256 + len(special_tokens)
             new_words = words
-            for j,merge in enumerate(self.merges):
-                words = new_words
-                new_words = []
-                for q,word in enumerate(words):
-                    intermediate_word = word
+            new_words = []
+            for q,word in enumerate(words):            
+                #words = new_words
+                token_set = set(word)
+                merge_word = word
+                for j,merge in enumerate(self.merges):
+                    
+                    if merge[0] not in token_set or merge[1] not in token_set:
+                        continue
+                    intermediate_word = merge_word
                     merge_word = []
                     i = 0
                     while i < len(intermediate_word):
@@ -613,7 +621,9 @@ def get_tokenizer(
                         else:
                             merge_word.append(intermediate_word[i])
                             i += 1
-                    new_words.append(merge_word)
+                    token_set = set(merge_word)    
+                new_words.append(merge_word)
+            #words = new_words
             reverse_vocab = {
                 token: token_id
                 for token_id, token in self.vocab.items()
@@ -622,11 +632,37 @@ def get_tokenizer(
                 for id in word:
                     answer.append(reverse_vocab[id])
             return answer
-                         
+        def encode_iterable(self, iterable) -> Iterable[int]:
+             for text in iterable:
+                #start = time.time()
+                ids = self.encode(text)
+                #print("一段耗时：", time.time() - start)
+                yield from ids
+        @classmethod
+        def from_files(cls,vocab_filepath,merges_filepath,special_tokens=None):
+            gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
+            with open(merges_filepath, encoding="utf-8") as f:
+                    gpt2_reference_merges = [tuple(line.rstrip().split(" ")) for line in f]
+                    reference_merges = [
+                        (
+                            bytes([gpt2_byte_decoder[token] for token in merge_token_1]),
+                            bytes([gpt2_byte_decoder[token] for token in merge_token_2]),
+                        )
+                        for merge_token_1, merge_token_2 in gpt2_reference_merges
+                    ]
+            with open(vocab_filepath, encoding="utf-8") as f:
+                    gpt2_reference_vocab = json.load(f)
+                    reference_vocab = {
+                        gpt2_vocab_index: bytes([gpt2_byte_decoder[token] for token in gpt2_vocab_item])
+                        for gpt2_vocab_item, gpt2_vocab_index in gpt2_reference_vocab.items()
+                    }
+            return cls(reference_vocab, reference_merges, special_tokens)
                         
 
-        def decode(self, ids):
-            pass
+        def decode(self, ids: list[int]) -> str:
+            return b"".join(
+                self.vocab[token_id] for token_id in ids
+            ).decode("utf-8", errors="replace")
     return Tokenizer(vocab, merges, special_tokens)
 
 
