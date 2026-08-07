@@ -85,7 +85,37 @@ def run_embedding(
         Float[Tensor, "... d_model"]: Batch of embeddings returned by your Embedding layer.
     """
 
-    raise NotImplementedError
+    class Embedding(torch.nn.Module):
+            def __init__(
+                self,
+                num_embeddings,
+                embedding_dim,
+                device=None,
+                dtype=None,
+            ):
+                super().__init__()
+                self.weight = torch.nn.Parameter(
+                    torch.empty(
+                        num_embeddings,
+                        embedding_dim,
+                        device=device,
+                        dtype=dtype,
+                    )
+                )
+    
+                torch.nn.init.trunc_normal_(
+                   self.weight,
+                )
+                
+    
+            # 创建并初始化权重参数
+    
+            def forward(self, token_ids:torch.Tensor) -> torch.Tensor:
+            # 完成线性变换
+                return self.weight[token_ids]
+    embedding = Embedding(vocab_size, d_model,weights.device, weights.dtype)
+    embedding.weight.data = weights
+    return embedding.forward(token_ids)
 
 
 def run_swiglu(
